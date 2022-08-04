@@ -60,7 +60,7 @@ public:
         } else {
             _touch(iter->second);
 
-            return mru_item()->value;
+            return iter->second->value;
         }
     }
 
@@ -88,7 +88,7 @@ public:
         assert(_key_map.size() <= _capacity && _key_map.size() == _kv_list.size());
     }
 
-    void update(typename Map::iterator &iter, Value value) {
+    void update(typename Map::iterator iter, Value value) {
         assert(iter != _key_map.end());
 
         iter->second->value = std::move(value);
@@ -114,8 +114,7 @@ public:
 
         dest._kv_list.splice(dest._kv_list.begin(), _kv_list, iter->second);
 
-        auto mru = dest.mru_item();
-        dest._key_map.emplace(mru->key, mru);
+        dest._key_map.emplace(iter->second->key, iter->second);
 
         _key_map.erase(iter);
     }
@@ -130,11 +129,10 @@ public:
     }
 
 private:
-    void _touch(typename List::iterator &iter) {
+    void _touch(typename List::iterator iter) {
         assert(iter != _kv_list.end());
 
         _kv_list.splice(_kv_list.begin(), _kv_list, iter);
-        iter = _kv_list.begin();
     }
 
     List _kv_list;

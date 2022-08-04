@@ -17,10 +17,13 @@
 #ifndef SEWENEW_CACHE_LFU_CACHE_H
 #define SEWENEW_CACHE_LFU_CACHE_H
 
+#include <cassert>
+#include <limits>
 #include <list>
 #include <iterator>
 #include <unordered_map>
 #include <unordered_set>
+#include "sw/cache/errors.h"
 
 namespace sw::cache {
 
@@ -28,77 +31,83 @@ namespace sw::cache {
 // http://dhruvbird.com/lfu.pdf
 template <typename Key, typename Value>
 class LfuCache {
+    class LfuItem;
+
+    using ItemList = std::list<LfuItem>;
+
+    struct FrequencyNode {
+        explicit FrequencyNode(std::size_t cnt) : frequency(cnt) {}
+
+        std::size_t frequency = 0;
+        ItemList items;
+    };
+
+    using FrequencyList = std::list<FrequencyNode>;
+
+    struct LfuItem {
+        LfuItem(const Key &k, Value v) : key(k), value(std::move(v)) {}
+
+        Key key;
+        Value value;
+
+        typename FrequencyList::iterator frequency_node;
+    };
+
+    using Map = std::unordered_map<Key, typename ItemList::iterator>;
+
 public:
-    explicit LfuCache(std::size_t capacity) : _capacity(capacity) {}
+    explicit LfuCache(std::size_t capacity) : _capacity(capacity) {
+        if (_capacity == 0) {
+            throw Error("capacity should be larger than 0");
+        }
+    }
 
     void set(const Key &key, Value value) {
         if (auto iter = _key_map.find(key); iter == _key_map.end()) {
-            // New item.
-            LfuItem item;
-            item.key = key;
-            item.value = std::move(value);
+            // New item. Evict before adding a new one.
+            if (_is_full()) {
+                _evict();
+            }
 
-            if (!_frequency_list.empty() && _frequency_list.front().count == 1) {
-                // Frequency node alreday exists.
-                auto &head_node = _frequency_list.front();
-                head_node.items.push_back(std::move(item));
-                head_node.items.back().frequency_node = _frequency_list.begin();
-                _key_map.emplace(key, std::prev(head_node.items.end()));
-            } else {
+            auto node_iter = _frequency_list.begin();
+            if (_frequency_list.empty() || _frequency_list.front().frequency != 1) {
                 // Need to add a new frequency node at the head.
-                _add_node(_frequency_list.begin());
-                _frequency_list.front().items.push_back(std::move(item));
+                assert(_frequency_list.empty() || _frequency_list.front().frequency > 1);
 
-                auto &head_node = _frequency_list.front();
-                head_node.items.back().frequency_node = _frequency_list.begin();
-                _key_map.emplace(key, std::prev(head_node.items.end()));
+                node_iter = _add_node(_frequency_list.begin(), 1);
+
+                assert(_frequency_list.front().frequency == 1);
             }
+
+            assert(node_iter != _frequency_list.end());
+
+            _add_item(node_iter, LfuItem(key, std::move(value)));
         } else {
-            // Item already exists.
-            auto &item_iter = iter->second;
-            auto cur_frequency_node = item_iter->frequency_node;
-            auto next_frequency_node = std::next(cur_frequency_node);
-            if (next_frequency_node != _frequency_list.end() &&
-                    next_frequency_node->count == cur_frequency_node->count + 1) {
-                // Node already exists. Move item to next node.
-                _move_item(next_frequency_node, cur_frequency_node, item_iter);
-            } else {
-                // Add a new node after current node.
-                auto dest = _add_node(next_frequency_node);
-                _move_item(dest, cur_frequency_node, item_iter);
-            }
-            item_iter->value = std::move(value);
+            // Item already exists. Need to update item position.
+            _touch(iter->second);
+
+            // Update value.
+            iter->second->value = std::move(value);
         }
     }
 
     std::optional<Value> get(const Key &key) {
-        if (auto iter = _key_map.find(key); iter == _key_map.end()) {
-            return std::nullopt;
+        if (auto iter = _key_map.find(key); iter != _key_map.end()) {
+            // Found the key. Update item position.
+            _touch(iter->second);
+
+            return iter->second->value;
         } else {
-            auto item_iter = iter->second;
-            auto node_iter = item_iter->frequency_node;
-            auto next_node_iter = std::next(node_iter);
-            if (next_node_iter != _frequency_list.end() &&
-                    next_node_iter->count == node_iter->count + 1) {
-                // Node already exists.
-                _move_item(next_node_iter, node_iter, item_iter);
-
-                return item_iter->value;
-            } else {
-                // Add a new node.
-                auto iter = _add_node(next_node_iter);
-                _move_item(iter, node_iter, item_iter);
-
-                return item_iter->value;
-            }
+            // Not found.
+            return std::nullopt;
         }
     }
 
     void del(const Key &key) {
         if (auto iter = _key_map.find(key); iter != _key_map.end()) {
-            auto item_iter = iter->second;
-            auto node = item_iter->frequency_node;
-            node->items.erase(item_iter);
+            auto item = iter->second;
+            auto node = item->frequency_node;
+            node->items.erase(item);
             if (node->items.empty()) {
                 _frequency_list.erase(node);
             }
@@ -107,21 +116,31 @@ public:
     }
 
 private:
-    FrequencyList::iterator _add_node(FrequencyList::iterator pos) {
-        FrequencyNode node;
-        node.count = 1;
-
-        return _frequency_list.insert(pos, std::move(node));
+    bool _is_full() const {
+        return _key_map.size() == _capacity;
     }
 
-    void _move_item(FrequencyList::iterator dest,
-            FrequencyList::iterator src,
-            ItemList::iterator &item) {
+    // Add a new node before `pos`.
+    typename FrequencyList::iterator _add_node(typename FrequencyList::iterator pos, std::size_t frequency) {
+        return _frequency_list.insert(pos, FrequencyNode(frequency));
+    }
+
+    void _add_item(typename FrequencyList::iterator node_iter, LfuItem item) {
+        auto &items = node_iter->items;
+
+        items.push_back(std::move(item));
+        items.back().frequency_node = node_iter;
+
+        _key_map.emplace(items.back().key, std::prev(items.end()));
+    }
+
+    void _move_item(typename FrequencyList::iterator dest,
+            typename FrequencyList::iterator src,
+            typename ItemList::iterator item) {
         auto &src_list = src->items;
         auto &dest_list = dest->items;
         dest_list.splice(dest_list.end(), src_list, item);
-        // TODO: since splice won't invalidate iterators, we don't need to reset item
-        item = std::prev(dest_list.end());
+
         item->frequency_node = dest;
 
         if (src_list.empty()) {
@@ -130,24 +149,55 @@ private:
         }
     }
 
-    class LfuItem;
+    void _touch(typename ItemList::iterator item) {
+        auto src = item->frequency_node;
+        auto dest = std::next(src);
+        auto frequency = _next_node_frequency(src);
+        if (dest == _frequency_list.end()) {
+            if (frequency > src->frequency) {
+                // Need to add a new node
+                dest = _add_node(dest, frequency);
+            } else {
+                // Reached the maximum frequency, do LRU on this node.
+                dest = src;
+            }
+        } else {
+            if (dest->frequency != frequency) {
+                // Need to add a new node.
+                dest = _add_node(dest, frequency);
+            } // else: node with the right frequency already exists.
+        }
 
-    using ItemList = std::list<LfuItem>;
+        _move_item(dest, src, item);
+    }
 
-    struct FrequencyNode {
-        std::size_t count = 0;
-        ItemList items;
-    };
+    std::size_t _next_node_frequency(typename FrequencyList::iterator node) const {
+        assert(node != _frequency_list.end());
 
-    using FrequencyList = std::list<FrequencyNode>;
+        auto frequency = node->frequency;
+        if (frequency == std::numeric_limits<std::size_t>::max()) {
+            // Has reached the max possible freqency.
+            return frequency;
+        } else {
+            return frequency + 1;
+        }
+    }
 
-    struct LfuItem {
-        Key key;
-        Value value;
-        typename FrequencyList::iterator frequency_node;
-    };
+    void _evict() {
+        assert(!_frequency_list.empty() && !_key_map.empty());
 
-    using Map = std::unordered_map<Key, typename ItemList::iterator>;
+        auto node = _frequency_list.begin();
+        auto &items = node->items;
+
+        assert(!items.empty());
+
+        _key_map.erase(items.front().key);
+        items.pop_front();
+
+        if (items.empty()) {
+            _frequency_list.erase(node);
+        }
+    }
 
     FrequencyList _frequency_list;
 
