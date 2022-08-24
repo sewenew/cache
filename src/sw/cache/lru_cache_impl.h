@@ -27,17 +27,16 @@
 namespace sw::cache::detail {
 
 template <typename Key, typename Value>
-struct KeyValue {
-    KeyValue(const Key &k, Value v) : key(k), value(std::move(v)) {}
-
-    Key key;
-    Value value;
-};
-
-template <typename Key, typename Value>
 class LruCacheImpl {
+    struct KeyValue {
+        KeyValue(const Key &k, Value v) : key(k), value(std::move(v)) {}
+
+        Key key;
+        Value value;
+    };
+
 public:
-    using List = std::list<KeyValue<Key, Value>>;
+    using List = std::list<KeyValue>;
     using Map = std::unordered_map<Key, typename List::iterator>;
 
     void set_capacity(std::size_t capacity) {
@@ -137,7 +136,7 @@ private:
 
     List _kv_list;
     Map _key_map;
-    std::size_t _capacity;
+    std::size_t _capacity = 0;
 };
 
 }

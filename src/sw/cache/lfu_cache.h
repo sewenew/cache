@@ -27,7 +27,7 @@
 
 namespace sw::cache {
 
-// The implementation of LFU cache is base on
+// The implementation of LFU cache is based on
 // http://dhruvbird.com/lfu.pdf
 template <typename Key, typename Value>
 class LfuCache {
