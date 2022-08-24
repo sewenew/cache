@@ -18,6 +18,7 @@
 #include "sw/cache/lru_cache_test.h"
 #include "sw/cache/slru_cache_test.h"
 #include "sw/cache/lfu_cache_test.h"
+#include "sw/cache/lirs_cache_test.h"
 
 int main() {
     try {
@@ -32,6 +33,10 @@ int main() {
         sw::cache::test::LfuCacheTest lfu_test;
         lfu_test.run();
         std::cout << "Pass LfuCache test" << std::endl;
+
+        sw::cache::test::LirsCacheTest lirs_test;
+        lirs_test.run();
+        std::cout << "Pass LirsCache test" << std::endl;
     } catch (const sw::cache::Error &err) {
         std::cerr << "failed to run cache test: " << err.what() << std::endl;
     }
