@@ -449,6 +449,8 @@ private:
             assert(!_list_q.is_full());
 
             _list_q.add(key, std::move(value), detail::LirsType::HIR);
+
+            _stack_s.add(key, _list_q.front(), detail::LirsType::HIR);
         }
     }
 

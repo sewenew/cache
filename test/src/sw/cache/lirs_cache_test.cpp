@@ -25,19 +25,17 @@ void LirsCacheTest::run() {
 
     cache.set("B", 1); // lir: B(lir)
     cache.set("A", 1); // lir: B(lir), A(lir)
-    cache.set("D", 1); // lir: B(lir), A(lir); hir: D
-    auto v = cache.get("D"); // lir: B(lir), A(lir), D(hir); hir: D
-    CACHE_ASSERT(v && *v == 1, "failed to do lirs test");
+    cache.set("D", 1); // lir: B(lir), A(lir), D(hir); hir: D
+    cache.del("D"); // lir: B(lir), A(lir), D(hir_nr); hir:
+    auto v = cache.get("D");
+    CACHE_ASSERT(!v, "failed to do lirs test");
 
-    cache.del("A"); // lir: B(lir), D(hir); hir: D
+    cache.del("A"); // lir: B(lir), D(hir_nr); hir:
     v = cache.get("A");
     CACHE_ASSERT(!v, "failed to do lirs test");
 
-    cache.set("A", 1); // lir: B(lir), D(hir), A(lir); hir: D
-
-    cache.set("E", 1); // lir: B(lir), D(hir_nr), A(lir); hir: E
-    v = cache.get("E"); // lir: B(lir), D(hir_nr), A(lir), E(hir); hir: E
-    CACHE_ASSERT(v && *v == 1, "failed to do lirs test");
+    cache.set("A", 1); // lir: B(lir), D(hir_nr), A(lir); hir:
+    cache.set("E", 1); // lir: B(lir), D(hir_nr), A(lir), E(hir); hir: E
 
     cache.set("D", 2); // lir: A(lir), E(hir_nr), D(lir); hir: B
     v = cache.get("D");
